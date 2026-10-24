@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>VATEY CAFE POS | ប្រព័ន្ធលក់កាហ្វេ + QR Payment</title>
+    <style>
+        * { box-sizing: border-box; font-family: 'Segoe UI', 'Khmer OS', system-ui, Tahoma, Geneva, Verdana, sans-serif; }
+        body { background: #f3f2ef; margin: 0; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; background: white; border-radius: 32px; box-shadow: 0 20px 35px -12px rgba(0,0,0,0.1); overflow: hidden; }
+        .header { background: #4a2c2a; color: #f9e0c7; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+        .cafe-title { font-weight: bold; font-size: 1.5rem; }
+        .lang-switch { background: #d9b48b; border: none; padding: 6px 14px; border-radius: 40px; cursor: pointer; font-weight: bold; }
+        .role-badge { background: #7f5539; padding: 6px 12px; border-radius: 40px; font-size: 0.8rem; }
+        .logout-btn { background: #b23c1c; border: none; color: white; padding: 6px 14px; border-radius: 40px; cursor: pointer; }
+        .nav-tabs { display: flex; gap: 6px; background: #f1e5d8; padding: 10px 20px; flex-wrap: wrap; border-bottom: 1px solid #ddd; }
+        .nav-btn { background: transparent; border: none; padding: 8px 18px; border-radius: 30px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+        .nav-btn.active { background: #4a2c2a; color: white; }
+        .content-panel { padding: 24px; background: #fffaf5; min-height: 550px; }
+        .card { background: white; border-radius: 24px; padding: 20px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border: 1px solid #f0e2d4; }
+        .grid-2, .grid-3 { display: grid; gap: 16px; }
+        .grid-2 { grid-template-columns: repeat(auto-fit, minmax(280px,1fr)); }
+        .grid-3 { grid-template-columns: repeat(auto-fill, minmax(200px,1fr)); }
+        input, select, textarea, button { border-radius: 20px; border: 1px solid #e2d4ca; padding: 10px 16px; font-size: 0.9rem; }
+        button { background: #a97142; color: white; border: none; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        button:hover { background: #7f5539; }
+        .remove-item-btn { background: #c0392b; padding: 5px 10px; font-size: 0.8rem; }
+        .remove-item-btn:hover { background: #a82313; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border-bottom: 1px solid #eee; padding: 10px 6px; text-align: left; }
+        .pos-cart { background: #fef7e8; padding: 16px; border-radius: 24px; }
+        .qr-gallery img { width: 100px; border-radius: 12px; border: 1px solid #ccc; margin: 4px; cursor: pointer; }
+        .qr-section { background: #fff0e0; border-radius: 20px; padding: 12px; margin-top: 16px; text-align: center; }
+        .user-list, .product-list { display: flex; flex-direction: column; gap: 16px; margin-top: 20px; }
+        .user-item, .product-item { background: #fef9f0; border-radius: 20px; padding: 16px; border: 1px solid #f0e2d4; display: flex; flex-direction: column; gap: 12px; }
+        .user-row, .product-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; justify-content: space-between; }
+        .user-label, .product-label { font-weight: bold; min-width: 100px; color: #5a3e2b; }
+        .user-actions, .product-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+        .summary-table { margin-bottom: 20px; background: #f8f4ec; border-radius: 16px; padding: 12px; }
+        .summary-table h4 { margin: 0 0 12px 0; color: #5a3e2b; }
+        @media print { body * { visibility: hidden; } .receipt-print, .receipt-print * { visibility: visible; } .receipt-print { position: absolute; left: 0; top: 0; width: 58mm; margin: 0; padding: 4px; font-size: 10px; font-family: 'Courier New', monospace; } }
+        .receipt-print { font-family: 'Courier New', monospace; width: 58mm; margin: 0 auto; font-size: 10px; line-height: 1.2; }
+        .receipt-print table { width: 100%; font-size: 9px; }
+        .cart-items-table { margin-top: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+<div class="container" id="appRoot"></div>
+<script>
+    // ------------------------- DATA STORAGE -------------------------
+    let DB = {
+        users: [],
+        products: [],
+        sales: [],
+        qrCodes: [],
+        settings: { interestRate: 10, exchangeRate: 4100, shiftMonFri: { start: "07:00", end: "18:00" }, shiftSatSun: { start: "07:00", end: "18:00" } }
+    };
+    function loadData() {
+        const stored = localStorage.getItem("vatey_cafe_pos");
+        if(stored) {
+            try {
+                const data = JSON.parse(stored);
+                DB = {...DB, ...data};
+                if(!DB.settings) DB.settings = { interestRate: 10, exchangeRate: 4100, shiftMonFri: { start: "07:00", end: "18:00" }, shiftSatSun: { start: "07:00", end: "18:00" } };
+                if(!DB.qrCodes) DB.qrCodes = [];
+                if(!DB.sales) DB.sales = [];
+            } catch(e) {}
+        } else {
+            DB.users = [
+                { id: 1, username: "admin", password: "admin123", role: "admin", shiftType: null },
+                { id: 2, username: "sokha", password: "seller123", role: "seller", shiftType: "mon-fri" },
+                { id: 3, username: "dara", password: "editor123", role: "menu_editor", shiftType: "sat-sun" }
+            ];
+            DB.products = [
+                { id: 101, name: "Americano", price: 2.5, category: "Hot Drinks", description: "Hot Americano" },
+                { id: 102, name: "Latte", price: 3.2, category: "Hot Drinks", description: "Smooth Latte" },
+                { id: 103, name: "Iced Americano", price: 3.0, category: "Iced Drinks", description: "Iced Americano" },
+                { id: 104, name: "Iced Caramel Macchiato", price: 3.8, category: "Iced Drinks", description: "Sweet & creamy" },
+                { id: 105, name: "Fruit Shake", price: 4.5, category: "ក្រឡុក", description: "Fruit Shake" },
+                { id: 106, name: "Smoothie", price: 4.0, category: "ក្រឡុក", description: "Creamy Smoothie" }
+            ];
+            DB.sales = [];
+            DB.qrCodes = [];
+            DB.settings = { interestRate: 10, exchangeRate: 4100, shiftMonFri: { start: "07:00", end: "18:00" }, shiftSatSun: { start: "07:00", end: "18:00" } };
+        }
+        saveDB();
+    }
+    function saveDB() { localStorage.setItem("vatey_cafe_pos", JSON.stringify(DB)); }
+
+    let currentUser = null;
+    let currentLang = "kh";
+    const translations = {
+        kh: { welcome: "សូមស្វាគមន៍", sale: "លក់", report: "របាយការណ៍", admin: "អ្នកគ្រប់គ្រង", logout: "ចាកចេញ", pos: "ចំណុចលក់", productMgr: "បញ្ចូលបញ្ជីភេសជ្ជះ", shiftMgr: "កំណត់វេន", qrMgr: "QR Code", interest: "អត្រាការប្រាក់/ពន្ធ", qrPay: "បង់ប្រាក់តាម QR" },
+        en: { welcome: "Welcome", sale: "Sell", report: "Reports", admin: "Admin", logout: "Logout", pos: "POS", productMgr: "Menu Cafe", shiftMgr: "Shift Mgmt", qrMgr: "QR Codes", interest: "Tax Rate", qrPay: "Pay by QR" }
+    };
+    function t(key) { return translations[currentLang][key] || key; }
+
+    function getDayShiftType() {
+        const day = new Date().getDay();
+        return (day === 0 || day === 6) ? "sat-sun" : "mon-fri";
+    }
+    function isWithinShift(userShiftType) {
+        if(!userShiftType) return true;
+        const now = new Date();
+        const currentDayType = getDayShiftType();
+        if(currentDayType !== userShiftType) return false;
+        const shift = currentDayType === "mon-fri" ? DB.settings.shiftMonFri : DB.settings.shiftSatSun;
+        const currentTime = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
+        return currentTime >= shift.start && currentTime <= shift.end;
+    }
+    function autoLogoutCheck() {
+        if(!currentUser) return false;
+        if(currentUser.role === "admin") return true;
+        if(!isWithinShift(currentUser.shiftType)) {
+            alert(currentLang==='kh'?"ម៉ោងវេនបានបញ្ចប់ សូមចាកចេញ!":"Shift ended, please login again.");
+            logout();
+            return false;
+        }
+        return true;
+    }
+    function logout() { currentUser = null; sessionStorage.removeItem("posUser"); renderLogin(); }
+
+    let loginUsernameCache = "", loginPasswordCache = "";
+    function renderLogin() {
+        const app = document.getElementById("appRoot");
+        app.innerHTML = `
+            <div style="max-width:400px; margin:80px auto; background:white; border-radius:32px; padding:32px; box-shadow:0 8px 20px rgba(0,0,0,0.1);">
+                <h2 style="color:#4a2c2a;">☕ VATEY CAFE POS</h2>
+                <p>${currentLang==='kh'?'សូមបញ្ចូលឈ្មោះ និងពាក្យសម្ងាត់':'Login to system'}</p>
+                <input type="text" id="loginUsername" placeholder="Username" value="${escapeHtml(loginUsernameCache)}" style="width:100%; margin-bottom:12px;"><br>
+                <div style="position:relative;">
+                    <input type="password" id="loginPassword" placeholder="Password" value="${escapeHtml(loginPasswordCache)}" style="width:100%;">
+                    <span style="position:absolute; right:12px; top:10px; cursor:pointer;" onclick="togglePassword('loginPassword')">👁️</span>
+                </div>
+                <button id="doLoginBtn" style="width:100%; margin-top:20px;">${currentLang==='kh'?'ចូលប្រើប្រាស់':'Login'}</button>
+                <div style="margin-top:12px; text-align:center;">
+                    <button id="langToggleLogin" style="background:#d9b48b;">🌐 ខ្មែរ/EN</button>
+                </div>
+            </div>
+        `;
+        const usernameInput = document.getElementById("loginUsername");
+        const passwordInput = document.getElementById("loginPassword");
+        usernameInput.addEventListener("input", (e) => { loginUsernameCache = e.target.value; });
+        passwordInput.addEventListener("input", (e) => { loginPasswordCache = e.target.value; });
+        document.getElementById("doLoginBtn").addEventListener("click", () => {
+            const uname = usernameInput.value;
+            const pwd = passwordInput.value;
+            const user = DB.users.find(u => u.username === uname && u.password === pwd);
+            if(user) {
+                if(user.role !== "admin" && !isWithinShift(user.shiftType)) {
+                    alert(currentLang==='kh'?"មិនមែនម៉ោងវេនរបស់អ្នក! សូមពិនិត្យម៉ោងវេន":"You are not allowed to login outside your shift hours.");
+                    return;
+                }
+                currentUser = user;
+                sessionStorage.setItem("posUser", JSON.stringify({id:user.id, username:user.username, role:user.role, shiftType:user.shiftType}));
+                loginUsernameCache = "";
+                loginPasswordCache = "";
+                renderDashboard();
+            } else {
+                alert(currentLang==='kh'?'ឈ្មោះអ្នកប្រើ ឬពាក្យសម្ងាត់មិនត្រឹមត្រូវ':'Invalid credentials');
+            }
+        });
+        document.getElementById("langToggleLogin").addEventListener("click", () => { currentLang = currentLang==='kh'?'en':'kh'; renderLogin(); });
+    }
+    function escapeHtml(str) { return str.replace(/[&<>]/g, function(m){ if(m==='&') return '&amp;'; if(m==='<') return '&lt;'; if(m==='>') return '&gt;'; return m;}); }
+
+    function renderDashboard() {
+        if(!currentUser) return renderLogin();
+        if(!autoLogoutCheck()) return;
+        const role = currentUser.role;
+        let navBtns = [];
+        if(role === "admin") navBtns = ["pos", "products", "users", "shifts", "qr", "tax", "reports"];
+        if(role === "menu_editor") navBtns = ["pos", "products", "reports"];
+        if(role === "seller") navBtns = ["pos", "reports"];
+        const activeTab = sessionStorage.getItem("activeTab") || navBtns[0];
+        const html = `
+            <div class="header">
+                <div class="cafe-title">☕ VATEY CAFE | 088 555 6696</div>
+                <div><span class="role-badge">${currentUser.role} : ${currentUser.username}</span>
+                <button class="logout-btn" id="logoutBtn">${t('logout')}</button>
+                <button class="lang-switch" id="globalLangBtn">🌐 KH/EN</button></div>
+            </div>
+            <div class="nav-tabs">
+                ${navBtns.map(btn => `<button class="nav-btn ${activeTab===btn?'active':''}" data-tab="${btn}">${getTabLabel(btn)}</button>`).join('')}
+            </div>
+            <div class="content-panel" id="dynamicPanel"></div>
+        `;
+        document.getElementById("appRoot").innerHTML = html;
+        document.querySelectorAll(".nav-btn").forEach(btn => {
+            btn.addEventListener("click", (e) => {
+                const tab = btn.getAttribute("data-tab");
+                sessionStorage.setItem("activeTab", tab);
+                renderDashboard();
+            });
+        });
+        document.getElementById("logoutBtn").addEventListener("click", logout);
+        document.getElementById("globalLangBtn").addEventListener("click", () => { currentLang = currentLang==='kh'?'en':'kh'; renderDashboard(); });
+        loadPanel(activeTab);
+        setInterval(() => { if(!autoLogoutCheck()) renderLogin(); }, 30000);
+    }
+    function getTabLabel(tab) {
+        const map = { pos:"🧾 POS", products:"📦 "+t('productMgr'), users:"👥 អ្នកប្រើ", shifts:"⏰ "+t('shiftMgr'), qr:"📱 QR", tax:"💰 "+t('interest'), reports:"📊 "+t('report') };
+        return map[tab] || tab;
+    }
+    function loadPanel(tab) {
+        const panel = document.getElementById("dynamicPanel");
+        if(!panel) return;
+        if(tab === "pos") renderPOS(panel);
+        else if(tab === "products") renderProductsManager(panel);
+        else if(tab === "users" && currentUser.role === "admin") renderUserManager(panel);
+        else if(tab === "shifts" && currentUser.role === "admin") renderShiftSettings(panel);
+        else if(tab === "qr" && currentUser.role === "admin") renderQRManager(panel);
+        else if(tab === "tax" && currentUser.role === "admin") renderTaxSettings(panel);
+        else if(tab === "reports") renderSalesReport(panel);
+        else panel.innerHTML = "<p>No access</p>";
+    }
+
+    // POS screen (unchanged)
+    function renderPOS(container) {
+        let cart = [];
+        let overallDiscount = 0;
+        let selectedWaitNum = Math.floor(Math.random()*100)+1;
+        let exchange = DB.settings.exchangeRate;
+        function getCurrentShiftQRCodes() { const currentShift = getDayShiftType(); return DB.qrCodes.filter(qr => qr.shift === currentShift); }
+        
+        function refreshCartDisplay() {
+            let subtotal = cart.reduce((sum, i) => sum + (i.price * i.qty * (1 - i.disc/100)), 0);
+            let vat = subtotal * (DB.settings.interestRate/100);
+            let totalWithVat = subtotal + vat;
+            let totalKHR = totalWithVat * exchange;
+            
+            let cartTableHtml = `<div class="cart-items-table"><h4>Items in Cart</h4><table style="width:100%"><thead><tr><th>Item</th><th>Qty</th><th>Disc%</th><th>Price</th><th>Total</th><th>Action</th></thead><tbody>`;
+            cart.forEach((item, idx) => {
+                let lineTotal = item.price * item.qty * (1 - item.disc/100);
+                cartTableHtml += `<tr>
+                    <td>${item.name}
+                    <td><input type="number" value="${item.qty}" min="1" style="width:60px" data-idx="${idx}" class="cart-qty">
+                    <td><input type="number" value="${item.disc}" step="1" style="width:60px" data-idx="${idx}" class="cart-disc">
+                    <td>$${item.price}
+                    <td>$${lineTotal.toFixed(2)}
+                    <td><button class="remove-item-btn" data-idx="${idx}" style="background:#c0392b; padding:4px 8px;">🗑️ Remove</button>
+                </tr>`;
+            });
+            cartTableHtml += `</tbody></table></div>`;
+            
+            const qrList = getCurrentShiftQRCodes();
+            let qrHtml = `<div class="qr-section"><strong>${t('qrPay')} (ស្កេន QR ដើម្បីបង់ប្រាក់)</strong><br/>`;
+            if(qrList.length === 0) qrHtml += `<span style="color:#888;">${currentLang==='kh'?'មិនទាន់មាន QR សម្រាប់វេននេះទេ':'No QR code for this shift'}</span>`;
+            else {
+                qrHtml += `<div class="qr-gallery" style="display:flex; flex-wrap:wrap; justify-content:center;">`;
+                qrList.forEach(qr => { qrHtml += `<img src="${qr.base64}" width="90" style="margin:6px; border-radius:12px; border:1px solid #ccc;" onclick="window.open(this.src)" title="Click to enlarge">`; });
+                qrHtml += `</div><button id="qrPayBtn" style="background:#2c7a47; margin-top:10px;">✅ ${t('qrPay')} (អតិថិជនបានស្កេនរួច)</button>`;
+            }
+            qrHtml += `</div>`;
+            
+            let htmlCart = `<div class="pos-cart">
+                <h3>🛒 Cart</h3>
+                ${cartTableHtml}
+                <div><strong>Subtotal:</strong> $${subtotal.toFixed(2)}</div>
+                <div><strong>Tax (${DB.settings.interestRate}%):</strong> $${vat.toFixed(2)}</div>
+                <div><strong>Total (VAT incl):</strong> $${totalWithVat.toFixed(2)} / ${totalKHR.toFixed(0)} ៛</div>
+                <label>Discount (USD): <input type="number" id="globalDisc" value="${overallDiscount}" step="0.5"></label><br/>
+                <label>Cash USD: <input type="number" id="cashUSD" value="0" step="1"></label> 
+                <label>Cash KHR: <input type="number" id="cashKHR" value="0" step="100"></label>
+                <div>Change USD: <span id="changeUSD">0.00</span> &nbsp; Change KHR: <span id="changeKHR">0</span></div>
+                <button id="checkoutCashBtn" style="background:#5a3e2b; margin:8px 4px;">💵 Complete Sale (Cash)</button>
+                <button id="clearCartBtn" style="margin:8px 4px;">🗑️ Clear Cart</button>
+                ${qrHtml}
+            </div>`;
+            
+            document.getElementById("cartArea").innerHTML = htmlCart;
+            
+            document.querySelectorAll(".cart-qty").forEach(inp => inp.addEventListener("change", (e) => { let idx = inp.dataset.idx; cart[idx].qty = parseInt(inp.value)||1; refreshCartDisplay(); }));
+            document.querySelectorAll(".cart-disc").forEach(inp => inp.addEventListener("change", (e) => { let idx = inp.dataset.idx; cart[idx].disc = parseFloat(inp.value)||0; refreshCartDisplay(); }));
+            document.querySelectorAll(".remove-item-btn").forEach(btn => btn.addEventListener("click", (e) => {
+                let idx = parseInt(btn.dataset.idx);
+                cart.splice(idx, 1);
+                refreshCartDisplay();
+            }));
+            document.getElementById("globalDisc")?.addEventListener("change", (e) => { overallDiscount = parseFloat(e.target.value)||0; refreshCartDisplay(); });
+            document.getElementById("checkoutCashBtn")?.addEventListener("click", () => finalizeSaleWithCash(subtotal, vat, totalWithVat, overallDiscount));
+            document.getElementById("clearCartBtn")?.addEventListener("click", () => { cart = []; overallDiscount = 0; refreshCartDisplay(); });
+            document.getElementById("qrPayBtn")?.addEventListener("click", () => finalizeSaleWithQR(subtotal, vat, totalWithVat, overallDiscount));
+            const updateChange = () => { let finalTotal = totalWithVat - overallDiscount; if(finalTotal<0) finalTotal=0; let cashUSD = parseFloat(document.getElementById("cashUSD")?.value||0); let cashKHR = parseFloat(document.getElementById("cashKHR")?.value||0); let paidUSD = cashUSD + (cashKHR/exchange); let changeUSD = paidUSD - finalTotal; if(changeUSD<0) changeUSD=0; document.getElementById("changeUSD").innerText = changeUSD.toFixed(2); document.getElementById("changeKHR").innerText = (changeUSD * exchange).toFixed(0); };
+            document.getElementById("cashUSD")?.addEventListener("input", updateChange);
+            document.getElementById("cashKHR")?.addEventListener("input", updateChange);
+            updateChange();
+        }
+
+
+         //function get invoice number auto
+
+        // ទាញយកលេខចុងក្រោយពី localStorage បើគ្មានទេ ឱ្យចាប់ផ្ដើមពី ១
+        let invoiceCounter = parseInt(localStorage.getItem('lastInvoiceNum')) || 1;
+
+        function generateInvoice() {
+        // បង្កប់លេខ 0 ខាងមុខឱ្យគ្រប់ ៤ខ្ទង់ (ឧទាហរណ៍៖ INV-0001, INV-0002)
+    let formattedNumber = String(invoiceCounter).padStart(4, '0');
+    let invoiceNo = "INV-" + formattedNumber;
+    
+    invoiceCounter++; // បង្កើនលេខ ១ សម្រាប់វិក្កយបត្របន្ទាប់
+    localStorage.setItem('lastInvoiceNum', invoiceCounter); // រក្សាទុកចូលក្នុងម៉ាស៊ីន
+    
+    return invoiceNo;
+        }
+        
+        function finalizeSaleWithCash(sub, vat, total, globalDiscVal) {
+            if(cart.length===0) return alert("Cart empty");
+            let finalTotal = total - globalDiscVal;
+            if(finalTotal<0) finalTotal=0;
+            let cashUSD = parseFloat(document.getElementById("cashUSD")?.value||0);
+            let cashKHR = parseFloat(document.getElementById("cashKHR")?.value||0);
+            let paidUSD = cashUSD + (cashKHR/exchange);
+            if(paidUSD < finalTotal) { alert(currentLang==='kh'?'ប្រាក់មិនគ្រប់':'Insufficient payment'); return; }
+            let changeUSD = paidUSD - finalTotal;
+            let changeKHR = changeUSD * exchange;
+            // 🔥 ហៅ function មកបង្កើតលេខ Invoice ថ្មីនៅត្រង់នេះ
+            let nextInvoiceNumber = generateInvoice();
+            const saleRecord = {
+                id: Date.now(), cashierId: currentUser.id, cashierName: currentUser.username,
+                date: new Date().toLocaleDateString(), time: new Date().toLocaleTimeString(),
+                invoiceNumber: nextInvoiceNumber, waitNumber: selectedWaitNum,
+               //  ប្ដូរពី Math.random() មកយកអថេរដែលយើងទើបបង្កើតខាងលើវិញ
+               //  invoiceNumber: nextInvoiceNumber, 
+               //  waitNumber: selectedWaitNum,
+                items: cart.map(i=>({productId:i.id, name:i.name, description:i.desc, qty:i.qty, price:i.price, disc:i.disc, total:i.price*i.qty*(1-i.disc/100)})),
+                subtotal: sub, discountGlobal: globalDiscVal, taxAmount: vat, totalAmount: finalTotal,
+                paidUSD: cashUSD, paidKHR: cashKHR, changeUSD: changeUSD, changeKHR: changeKHR,
+                paymentMethod: "cash"
+            };
+            DB.sales.push(saleRecord);
+            saveDB();
+            printReceipt(saleRecord);
+            cart = []; overallDiscount=0; 
+            //  ចំណុចសំខាន់៖ រ៉ង់ដូមបង្កើតលេខរង់ចាំ (Wait Number) ថ្មីមួយទៀតសម្រាប់ភ្ញៀវបន្ទាប់
+           // selectedWaitNum = Math.floor(Math.random() * 100) + 1;
+            refreshCartDisplay();
+            alert(currentLang==='kh'?'ការលក់បានបញ្ចប់ និងបោះពុម្ពបង្កាន់ដៃរួចរាល់':'Sale completed & receipt printed');
+        }
+
+       
+        
+        function finalizeSaleWithQR(sub, vat, total, globalDiscVal) {
+              // 🔥 ហៅ function មកបង្កើតលេខ Invoice ថ្មីនៅត្រង់នេះ   
+            let nextInvoiceNumber = generateInvoice()
+            if(cart.length===0) return alert("Cart empty");
+            let finalTotal = total - globalDiscVal;
+            if(finalTotal<0) finalTotal=0;
+            const saleRecord = {
+                id: Date.now(), cashierId: currentUser.id, cashierName: currentUser.username,
+                date: new Date().toLocaleDateString(), time: new Date().toLocaleTimeString(),
+               // invoiceNumber: "INV-"+Math.floor(Math.random()*9999), waitNumber: selectedWaitNum,
+                // 🔄 ប្ដូរពី Math.random() មកយកអថេរដែលយើងទើបបង្កើតខាងលើវិញ
+                 invoiceNumber: nextInvoiceNumber, 
+                 waitNumber: selectedWaitNum,
+                items: cart.map(i=>({productId:i.id, name:i.name, description:i.desc, qty:i.qty, price:i.price, disc:i.disc, total:i.price*i.qty*(1-i.disc/100)})),
+                subtotal: sub, discountGlobal: globalDiscVal, taxAmount: vat, totalAmount: finalTotal,
+                paidUSD: finalTotal, paidKHR: 0, changeUSD: 0, changeKHR: 0,
+                paymentMethod: "qr"
+            };
+            DB.sales.push(saleRecord);
+            saveDB();
+            printReceipt(saleRecord);
+            cart = []; overallDiscount=0; 
+             //  ចំណុចសំខាន់៖ រ៉ង់ដូមបង្កើតលេខរង់ចាំ (Wait Number) ថ្មីមួយទៀតសម្រាប់ភ្ញៀវបន្ទាប់
+           // selectedWaitNum = Math.floor(Math.random() * 100) + 1;
+            refreshCartDisplay();
+            alert(currentLang==='kh'?'បានបង់ប្រាក់តាម QR រួចរាល់! សូមអរគុណ':'QR payment completed! Thank you.');
+        }
+        
+        function printReceipt(sale) {
+            let itemsHtml = "";
+            sale.items.forEach(it => {
+                let itemName = it.name.length > 20 ? it.name.substring(0,18)+".." : it.name;
+                itemsHtml += `<tr>
+                    <td>${itemName}
+                    <td>${it.qty}
+                    <td>$${it.price.toFixed(2)}
+                    <td>${it.disc}%
+                    <td>$${it.total.toFixed(2)}
+                </tr>`;
+            });
+            let totalQty = sale.items.reduce((s,it)=>s+it.qty,0);
+            let paymentLine = sale.paymentMethod === "qr" ? "<b>Payment: QR Code (Full amount)</b><br/>" : `Cash USD: $${sale.paidUSD.toFixed(2)}<br/>Cash KHR: ${sale.paidKHR.toFixed(0)} ៛<br/>Change USD: $${sale.changeUSD.toFixed(2)}<br/>Change KHR: ${sale.changeKHR.toFixed(0)} ៛`;
+            const fullAddress = "ភូមិប្រហួត សង្កាត់រកាក្រៅ ក្រុងដូនកែវ ខេត្តតាកែវ";
+            const receiptHtml = `
+            <div class="receipt-print" style="width:57mm; font-family: 'Courier New', monospace; padding:4px;">
+                <center><b>VATEY CAFE</b><br/>📞 088 555 6696<br/>${fullAddress}</center>
+                <hr/>
+                <div>Cashier: ${sale.cashierName}</div>
+                <div>Date: ${sale.date}  ${sale.time}</div>
+                <div>Invoice: ${sale.invoiceNumber}  Wait#: ${sale.waitNumber}</div>
+                <hr/>
+                <table style="width:100%; font-size:9px;" cellpadding="2">
+                    <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Disc%</th><th>Total</th></tr></thead>
+                    <tbody>${itemsHtml}</tbody>
+                </table>
+                <hr/>
+                
+                <div>Discount: $${sale.discountGlobal.toFixed(2)}</div>
+                <div>Tax (${DB.settings.interestRate}%): $${sale.taxAmount.toFixed(2)}</div>
+                <div><b>TOTAL (VAT incl): $${sale.totalAmount.toFixed(2)}</b> / ${(sale.totalAmount*DB.settings.exchangeRate).toFixed(0)} ៛</div>
+                <div>${paymentLine}</div>
+                <hr/>
+                <center>សូមអញ្ជើញមកម្តងទៀត !<br/>សូមអរគុណ</center>
+            </div>`;
+            let printWin = window.open('', '_blank');
+            printWin.document.write(`<html><head><title>Receipt</title><style>body{margin:0;padding:0;width:57mm;font-size:10px;font-family:'Courier New',monospace;}</style></head><body>${receiptHtml}</body></html>`);
+            printWin.document.close();
+            printWin.print();
+        }
+        
+        let menuHtml = `<div class="grid-2"><div><h3>☕ Menu</h3><div class="grid-3" id="productList"></div></div><div id="cartArea"></div></div>
+        <div><label>Queue/Wait#: <input id="waitNum" value="${selectedWaitNum}"></label></div>`;
+        container.innerHTML = menuHtml;
+        
+        function renderProducts() {
+            const prodDiv = document.getElementById("productList");
+            let cats = [...new Map(DB.products.map(p=>[p.category,p.category])).keys()];
+            let html = "";
+            cats.forEach(cat => {
+                html += `<h4>${cat}</h4>`;
+                DB.products.filter(p=>p.category===cat).forEach(p => {
+                    html += `<button style="margin:4px; background:#e7cfb5; color:#3b2a22;" data-id="${p.id}" data-name="${p.name}" data-price="${p.price}" data-desc="${p.description}" class="addProductBtn">${p.name}<br/>$${p.price}</button>`;
+                });
+            });
+            prodDiv.innerHTML = html;
+            document.querySelectorAll(".addProductBtn").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    let id = parseInt(btn.dataset.id); let name = btn.dataset.name; let price = parseFloat(btn.dataset.price);
+                    let existing = cart.find(i=>i.id===id);
+                    if(existing) existing.qty++;
+                    else cart.push({ id, name, price, desc: btn.dataset.desc, qty:1, disc:0 });
+                    refreshCartDisplay();
+                });
+            });
+        }
+        renderProducts();
+        refreshCartDisplay();
+        document.getElementById("waitNum")?.addEventListener("change", (e) => selectedWaitNum = e.target.value);
+    }
+
+    // Products manager (vertical)
+    function renderProductsManager(container) {
+        function refresh() {
+            let html = `<div class="card"><h3>Manage Products</h3><button id="addProductBtn">+ Add New Product</button><div class="product-list">`;
+            DB.products.forEach(p => {
+                html += `
+                    <div class="product-item" data-id="${p.id}">
+                        <div class="product-row"><span class="product-label">📦 Name:</span> <span>${escapeHtml(p.name)}</span></div>
+                        <div class="product-row"><span class="product-label">📁 Category:</span> <span>${escapeHtml(p.category)}</span></div>
+                        <div class="product-row"><span class="product-label">💰 Price ($):</span> <span>$${p.price.toFixed(2)}</span></div>
+                        <div class="product-actions">
+                            <button class="editProductBtn" data-id="${p.id}">✏️ Edit</button>
+                            <button class="delProductBtn" data-id="${p.id}">🗑️ Delete</button>
+                        </div>
+                    </div>
+                `;
+            });
+            html += `</div></div>`;
+            container.innerHTML = html;
+            document.getElementById("addProductBtn")?.addEventListener("click", () => productFormModal());
+            document.querySelectorAll(".editProductBtn").forEach(btn => btn.addEventListener("click", (e) => { let id = parseInt(btn.dataset.id); let prod = DB.products.find(p => p.id === id); productFormModal(prod); }));
+            document.querySelectorAll(".delProductBtn").forEach(btn => btn.addEventListener("click", (e) => { let id = parseInt(btn.dataset.id); DB.products = DB.products.filter(p => p.id !== id); saveDB(); refresh(); }));
+        }
+        function productFormModal(prod = null) {
+            let name = prompt("Product Name", prod?.name || ""); if (!name) return;
+            let category = prompt("Category (Hot Drinks / Iced Drinks / ក្រឡុក)", prod?.category || "Hot Drinks");
+            let price = parseFloat(prompt("Price (USD)", prod?.price || "")); if (isNaN(price)) return;
+            if (prod) { prod.name = name; prod.category = category; prod.price = price; }
+            else DB.products.push({ id: Date.now(), name, category, price, description: name });
+            saveDB(); refresh();
+        }
+        refresh();
+    }
+
+    // User manager
+    function renderUserManager(container) {
+        function refresh() {
+            let html = `<div class="card"><h3>គ្រប់គ្រងអ្នកប្រើ & កំណត់វេន</h3><button id="addUserBtn">+ New User</button><div class="user-list">`;
+            DB.users.forEach(u => {
+                const shiftOptions = `<option value="mon-fri" ${u.shiftType==='mon-fri'?'selected':''}>Mon-Fri (${DB.settings.shiftMonFri.start} - ${DB.settings.shiftMonFri.end})</option>
+                    <option value="sat-sun" ${u.shiftType==='sat-sun'?'selected':''}>Sat-Sun (${DB.settings.shiftSatSun.start} - ${DB.settings.shiftSatSun.end})</option>
+                    <option value="" ${!u.shiftType?'selected':''}>No shift (admin)</option>`;
+                html += `<div class="user-item"><div class="user-row"><span class="user-label">👤 Username:</span> <span>${escapeHtml(u.username)}</span></div>
+                    <div class="user-row"><span class="user-label">🎭 Role:</span> <span>${u.role}</span></div>
+                    <div class="user-row"><span class="user-label">⏰ Shift:</span> <select data-id="${u.id}" class="shiftSelect">${shiftOptions}</select></div>
+                    <div class="user-actions"><button class="editPwdBtn" data-id="${u.id}" data-name="${u.username}">🔑 Change Password</button>
+                    <button class="delUser" data-id="${u.id}">🗑️ Delete</button></div></div>`;
+            });
+            html += `</div></div>`;
+            container.innerHTML = html;
+            document.querySelectorAll(".shiftSelect").forEach(sel => sel.addEventListener("change", (e) => { let userId = parseInt(sel.dataset.id); let user = DB.users.find(u=>u.id===userId); if(user) user.shiftType = sel.value || null; saveDB(); }));
+            document.getElementById("addUserBtn")?.addEventListener("click", () => { let uname = prompt("Username"); if(!uname) return; let pwd = prompt("Password"); let role = prompt("Role (admin/menu_editor/seller)", "seller"); DB.users.push({ id: Date.now(), username: uname, password: pwd, role, shiftType: role==="admin"?null:"mon-fri" }); saveDB(); refresh(); });
+            document.querySelectorAll(".delUser").forEach(btn => btn.addEventListener("click", (e) => { let id = parseInt(btn.dataset.id); if(currentUser && currentUser.id === id) { alert("You cannot delete yourself while logged in."); return; } DB.users = DB.users.filter(u=>u.id!==id); saveDB(); refresh(); }));
+            document.querySelectorAll(".editPwdBtn").forEach(btn => btn.addEventListener("click", (e) => { let userId = parseInt(btn.dataset.id); let user = DB.users.find(u=>u.id===userId); if(!user) return; let newPwd = prompt(`Enter new password for user "${user.username}":`); if(newPwd && newPwd.trim() !== "") { user.password = newPwd; saveDB(); alert(`Password for ${user.username} updated successfully.`); refresh(); } else if(newPwd !== null) alert("Password cannot be empty."); }));
+        }
+        refresh();
+    }
+
+    function renderShiftSettings(container) {
+        container.innerHTML = `<div class="card"><h3>កែប្រែម៉ោងវេន</h3><label>Mon-Fri : <input id="mfStart" value="${DB.settings.shiftMonFri.start}"> to <input id="mfEnd" value="${DB.settings.shiftMonFri.end}"></label><br/><label>Sat-Sun : <input id="ssStart" value="${DB.settings.shiftSatSun.start}"> to <input id="ssEnd" value="${DB.settings.shiftSatSun.end}"></label><br/><button id="saveShiftBtn">Save Shifts</button></div>`;
+        document.getElementById("saveShiftBtn")?.addEventListener("click", () => { DB.settings.shiftMonFri = { start: document.getElementById("mfStart").value, end: document.getElementById("mfEnd").value }; DB.settings.shiftSatSun = { start: document.getElementById("ssStart").value, end: document.getElementById("ssEnd").value }; saveDB(); alert("Updated"); if(document.querySelector(".user-list")) renderUserManager(document.getElementById("dynamicPanel")); });
+    }
+
+    function renderQRManager(container) {
+        function refresh() {
+            let html = `<div class="card"><h3>QR Codes (រូបភាពបង់ប្រាក់)</h3><input type="file" id="qrUpload" accept="image/*" multiple><button id="uploadQrBtn">Upload QR(s)</button><div class="qr-gallery">`;
+            DB.qrCodes.forEach((qr,idx) => { html += `<div><img src="${qr.base64}" width="80"/><select data-idx="${idx}" class="qrShift"><option value="mon-fri" ${qr.shift==='mon-fri'?'selected':''}>Mon-Fri</option><option value="sat-sun" ${qr.shift==='sat-sun'?'selected':''}>Sat-Sun</option></select><button data-idx="${idx}" class="delQrBtn">X</button></div>`; });
+            html += `</div></div>`;
+            container.innerHTML = html;
+            document.getElementById("uploadQrBtn")?.addEventListener("click", () => { let files = document.getElementById("qrUpload").files; for(let f of files){ let reader = new FileReader(); reader.onload = e => { DB.qrCodes.push({ id:Date.now(), base64:e.target.result, shift:"mon-fri" }); saveDB(); refresh(); }; reader.readAsDataURL(f); } });
+            document.querySelectorAll(".delQrBtn").forEach(btn => btn.addEventListener("click", (e) => { let idx = btn.dataset.idx; DB.qrCodes.splice(idx,1); saveDB(); refresh(); }));
+            document.querySelectorAll(".qrShift").forEach(sel => sel.addEventListener("change", (e) => { let idx = sel.dataset.idx; DB.qrCodes[idx].shift = sel.value; saveDB(); }));
+        }
+        refresh();
+    }
+
+    function renderTaxSettings(container) {
+        container.innerHTML = `<div class="card"><h3>អត្រាពន្ធ (VAT%) & Exchange Rate</h3><label>Interest/Tax %: <input id="taxRate" type="number" step="0.5" value="${DB.settings.interestRate}"></label><br/><label>Exchange Rate (1 USD to KHR): <input id="exRate" value="${DB.settings.exchangeRate}"></label><br/><button id="saveTaxBtn">Save</button></div>`;
+        document.getElementById("saveTaxBtn")?.addEventListener("click", () => { DB.settings.interestRate = parseFloat(document.getElementById("taxRate").value); DB.settings.exchangeRate = parseFloat(document.getElementById("exRate").value); saveDB(); alert("Saved"); });
+    }
+
+    // Sales Report: For menu_editor, remove Monthly Income table but keep filter and all sales data
+    function renderSalesReport(container) {
+        const isAdmin = (currentUser.role === "admin");
+        const isSeller = (currentUser.role === "seller");
+        
+        // For seller, force today only, no filter, no monthly
+        // For menu_editor: show filter, show all sales, but no monthly table
+        // For admin: show filter, show all sales, show monthly table
+        
+        let filterHtml = '';
+        let showMonthly = false;
+        
+        if (isSeller) {
+            // Seller: no filter, no monthly
+            filterHtml = '';
+            showMonthly = false;
+        } else if (isAdmin) {
+            filterHtml = `<label>Filter: <select id="filterType">
+                <option value="all">ទាំងអស់</option>
+                <option value="today">ថ្ងៃនេះ</option>
+                <option value="month">ខែនេះ</option>
+            </select></label>`;
+            showMonthly = true;
+        } else { // menu_editor
+            filterHtml = `<label>Filter: <select id="filterType">
+                <option value="all">ទាំងអស់</option>
+                <option value="today">ថ្ងៃនេះ</option>
+                <option value="month">ខែនេះ</option>
+            </select></label>`;
+            showMonthly = false; // remove monthly for menu_editor
+        }
+        
+        let html = `
+            <div class="card">
+                <h3>Sales Report (ប្រចាំវេន/ថ្ងៃ/ខែ)</h3>
+                ${filterHtml}
+                <div class="summary-table">
+                    <h4>📅 បញ្ជីចំណូលប្រចាំថ្ងៃ (Daily Income)</h4>
+                    <table style="width:100%">
+                        <thead><tr><th>កាលបរិច្ឆេទ (Date)</th><th>Hot ($)</th><th>Iced ($)</th><th>ក្រឡុក ($)</th><th>សរុប ($)</th><th>សរុប (៛)</th></tr></thead>
+                        <tbody id="dailySummaryBody"></tbody>
+                    </table>
+                </div>
+                ${showMonthly ? `
+                <div class="summary-table">
+                    <h4>📆 បញ្ជីចំណូលប្រចាំខែ (Monthly Income)</h4>
+                    <table style="width:100%">
+                        <thead><tr><th>ខែ/ឆ្នាំ (Month-Year)</th><th>Hot ($)</th><th>Iced ($)</th><th>ក្រឡុក ($)</th><th>សរុប ($)</th><th>សរុប (៛)</th></tr></thead>
+                        <tbody id="monthlySummaryBody"></tbody>
+                    </table>
+                </div>
+                ` : ''}
+                <h4>📋 ប្រវត្តិលេខវិក្ក័យបត្រ (Transaction Details)</h4>
+                <div style="overflow-x:auto;"><table style="min-width:800px;"><thead><tr><th>លេខវិក្ក័យបត្រ</th><th>Cashier</th><th>Item</th><th>Description</th><th>Qty</th><th>Price ($)</th><th>Total ($)</th><th>Time</th><th>Method</th></tr></thead><tbody id="reportBody"></tbody></table></div>
+            </div>
+        `;
+        container.innerHTML = html;
+        
+        function getProductCategory(productId) {
+            const prod = DB.products.find(p => p.id === productId);
+            if (!prod) return "Unknown";
+            return prod.category;
+        }
+        
+        function updateReports() {
+            let filteredSales = DB.sales.slice();
+            
+            if (isSeller) {
+                // Seller: only today's sales from this seller
+                const todayStr = new Date().toLocaleDateString();
+                filteredSales = filteredSales.filter(s => s.date === todayStr && s.cashierId === currentUser.id);
+            } else {
+                // Admin or menu_editor: apply filter from dropdown
+                let filter = document.getElementById("filterType").value;
+                if(filter === "today") {
+                    filteredSales = filteredSales.filter(s => s.date === new Date().toLocaleDateString());
+                } else if(filter === "month") {
+                    const thisMonth = new Date().getMonth();
+                    const thisYear = new Date().getFullYear();
+                    filteredSales = filteredSales.filter(s => {
+                        const parts = s.date.split('/');
+                        if(parts.length === 3) {
+                            let month = parseInt(parts[0],10)-1;
+                            let year = parseInt(parts[2],10);
+                            return month === thisMonth && year === thisYear;
+                        }
+                        return false;
+                    });
+                }
+            }
+            
+            // Daily summary
+            let dailyMap = new Map();
+            filteredSales.forEach(sale => {
+                const date = sale.date;
+                if (!dailyMap.has(date)) dailyMap.set(date, { hot: 0, iced: 0, cocktail: 0, total: 0 });
+                const entry = dailyMap.get(date);
+                sale.items.forEach(item => {
+                    const category = getProductCategory(item.productId);
+                    const itemTotal = item.total;
+                    const catLower = category.toLowerCase();
+                    if (catLower.includes("hot")) entry.hot += itemTotal;
+                    else if (catLower.includes("iced")) entry.iced += itemTotal;
+                    else if (catLower.includes("ក្រឡុក") || catLower.includes("cocktail") || catLower.includes("shake")) entry.cocktail += itemTotal;
+                    entry.total += itemTotal;
+                });
+            });
+            let dailyRows = "";
+            const sortedDates = Array.from(dailyMap.keys()).sort((a,b) => new Date(a) - new Date(b));
+            for (let date of sortedDates) {
+                const d = dailyMap.get(date);
+                const totalKHR = d.total * DB.settings.exchangeRate;
+                dailyRows += `<tr>
+                    <td>${date}
+                    <td>$${d.hot.toFixed(2)}
+                    <td>$${d.iced.toFixed(2)}
+                    <td>$${d.cocktail.toFixed(2)}
+                    <td>$${d.total.toFixed(2)}
+                    <td>${totalKHR.toFixed(0)} ៛
+                </tr>`;
+            }
+            document.getElementById("dailySummaryBody").innerHTML = dailyRows || "<tr><td colspan='6'>No sales</tr>";
+            
+            // Monthly summary (only for admin)
+            if (showMonthly) {
+                let monthlyMap = new Map();
+                filteredSales.forEach(sale => {
+                    const parts = sale.date.split('/');
+                    if (parts.length === 3) {
+                        const monthKey = `${parts[0]}/${parts[2]}`;
+                        if (!monthlyMap.has(monthKey)) monthlyMap.set(monthKey, { hot: 0, iced: 0, cocktail: 0, total: 0 });
+                        const entry = monthlyMap.get(monthKey);
+                        sale.items.forEach(item => {
+                            const category = getProductCategory(item.productId);
+                            const itemTotal = item.total;
+                            const catLower = category.toLowerCase();
+                            if (catLower.includes("hot")) entry.hot += itemTotal;
+                            else if (catLower.includes("iced")) entry.iced += itemTotal;
+                            else if (catLower.includes("ក្រឡុក") || catLower.includes("cocktail") || catLower.includes("shake")) entry.cocktail += itemTotal;
+                            entry.total += itemTotal;
+                        });
+                    }
+                });
+                let monthlyRows = "";
+                const sortedMonths = Array.from(monthlyMap.keys()).sort((a,b) => {
+                    let [m1,y1] = a.split('/'); let [m2,y2] = b.split('/');
+                    if (y1 !== y2) return parseInt(y1) - parseInt(y2);
+                    return parseInt(m1) - parseInt(m2);
+                });
+                for (let monthKey of sortedMonths) {
+                    const m = monthlyMap.get(monthKey);
+                    const totalKHR = m.total * DB.settings.exchangeRate;
+                    monthlyRows += `<tr>
+                        <td>${monthKey}
+                        <td>$${m.hot.toFixed(2)}
+                        <td>$${m.iced.toFixed(2)}
+                        <td>$${m.cocktail.toFixed(2)}
+                        <td>$${m.total.toFixed(2)}
+                        <td>${totalKHR.toFixed(0)} ៛
+                    </tr>`;
+                }
+                document.getElementById("monthlySummaryBody").innerHTML = monthlyRows || "<tr><td colspan='6'>No sales</tr>";
+            }
+            
+            // Transaction details
+            let rows = "";
+            filteredSales.forEach(sale => {
+                sale.items.forEach(it => {
+                    rows += `<tr>
+                        <td>${sale.invoiceNumber}
+                        <td>${sale.cashierName}
+                        <td>${it.name}
+                        <td>${it.description || ''}
+                        <td>${it.qty}
+                        <td>$${it.price.toFixed(2)}
+                        <td>$${it.total.toFixed(2)}
+                        <td>${sale.time}
+                        <td>${sale.paymentMethod === 'qr' ? 'QR' : 'Cash'}
+                    </tr>`;
+                });
+            });
+            document.getElementById("reportBody").innerHTML = rows || "<tr><td colspan='9'>No sales found</table>";
+        }
+        
+        updateReports();
+        if (!isSeller) {
+            const filterSelect = document.getElementById("filterType");
+            if (filterSelect) filterSelect.addEventListener("change", updateReports);
+        }
+    }
+    
+    window.togglePassword = (id) => { let x = document.getElementById(id); if(x) x.type = x.type==="password"?"text":"password"; };
+    loadData();
+    const saved = sessionStorage.getItem("posUser");
+    if(saved) { try{ currentUser = JSON.parse(saved); if(currentUser && DB.users.find(u=>u.id===currentUser.id)) renderDashboard(); else renderLogin(); } catch(e){ renderLogin(); } }
+    else renderLogin();
+
+
+/*
+   //code clear invoice number to INV-0001
+    // 1. Helper function to format the number into "INV-XXXX"
+    function formatInvoiceNumber(num) {
+    // Pads the number with leading zeros up to 4 digits (e.g., 1 becomes 0001)
+    const paddedNumber = String(num).padStart(4, '0');
+    return `INV-${paddedNumber}`;
+}
+
+// 2. Main function to handle the "Clear" button click
+function handleClearInvoice() {
+    try {
+        // Reset your invoice counter back to 1
+        let currentInvoiceId = 1; 
+        
+        // Generate the clean string: "INV-0001"
+        const clearedInvoiceNumber = formatInvoiceNumber(currentInvoiceId);
+        
+        // --- UPDATE YOUR UI / STATE HERE ---
+        // Example A: If updating an HTML input field
+        const invoiceInput = document.getElementById('invoiceDisplay');
+        if (invoiceInput) {
+            invoiceInput.value = clearedInvoiceNumber;
+        }
+        
+        // Example B: If you are using React/Vue state, update it here
+        // setInvoiceNumber(clearedInvoiceNumber);
+
+        console.log("Invoice successfully reset to:", clearedInvoiceNumber);
+        
+        // Optional: Reset other form fields or clear the cart items here
+         clearCart();
+        
+    } catch (error) {
+        console.error("Error clearing invoice number:", error);
+    }
+}
+
+// 3. Attach the event listener to your "Clear" button
+const clearButton = document.getElementById('clearButtonId'); // Replace with your actual button ID
+if (clearButton) {
+    clearButton.addEventListener('click', handleClearInvoice);
+}
+
+// ❌ WRONG: Treating the whole object as a string
+let invoiceNum = "INV-" + selectedInvoiceObject; // Results in "INV-[object Object]"
+// CORRECT: Extracting the numeric ID first
+let currentInvoiceId = selectedInvoiceObject.id; // e.g., 1
+let invoiceNum = formatInvoiceNumber(currentInvoiceId); // Results in "INV-0001"
+*/
+// អនុគមន៍សម្រាប់លុបវិក្កយបត្រចាស់ៗ និងកំណត់ឱ្យចាប់ផ្តើមពី INV-0001 ឡើងវិញ
+function clearAndResetInvoices() {
+    // 1. លុបលេខរាប់វិក្កយបត្រចាស់ចេញពី localStorage
+    localStorage.removeItem('lastInvoiceNum');
+    
+    // 2. ប្រសិនបើអ្នកមានរក្សាទុកបញ្ជីវិក្កយបត្រ (Array នៃ Transactions) ត្រូវលុបវាចេញដែរ
+    // ឧទាហរណ៍៖ ប្រសិនបើអ្នកប្រើឈ្មោះ 'transactions' ឬ 'invoices' សម្រាប់រក្សាទុកតារាង
+    localStorage.removeItem('transactions'); 
+    localStorage.removeItem('invoices'); // ផ្លាស់ប្តូរឈ្មោះតាម key ដែលអ្នកបានប្រើជាក់ស្តែង
+
+    // 3. កំណត់តួអក្សររាប់ (Counter) នៅក្នុងកូដរបស់អ្នកឱ្យទៅលេខ ១ វិញភ្លាមៗ
+    invoiceCounter = 1;
+
+    console.log("បានសម្អាតទិន្នន័យវិក្កយបត្រចាស់ៗ និងកំណត់ទៅ INV-0001 រួចរាល់!");
+}
+
+// ---- របៀបប្រើប្រាស់ ----
+// ប្រសិនបើអ្នកចង់ឱ្យវាលុបភ្លាមៗរាល់ពេលបើកទំព័រ Web ឡើងវិញ (ទំព័រលក់ ឬទំព័រវិក្កយបត្រ)៖
+window.onload = function() {
+    clearAndResetInvoices();
+};
+</script>
+</body>
+</html>
